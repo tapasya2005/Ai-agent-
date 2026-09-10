@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🌾 Smart Farming AI Advisor</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+
+<!-- ===== TOP NAV ===== -->
+<header class="navbar">
+  <div class="navbar__brand">
+    <span class="navbar__icon">🌾</span>
+    <span class="navbar__title">Smart Farming AI Advisor</span>
+    <span class="navbar__sub">powered by Groq · Compound (open-source)</span>
+  </div>
+  <div class="navbar__meta">
+    <span class="model-badge" title="Active open-source LLM">⚡ {{ model_name }}</span>
+    <button id="btnReset" class="btn btn--ghost" title="Clear conversation">↺ New Chat</button>
+  </div>
+</header>
+
+<!-- ===== MAIN LAYOUT ===== -->
+<main class="layout">
+
+  <!-- ── LEFT SIDEBAR ── -->
+  <aside class="sidebar">
+
+    <section class="sidebar__section">
+      <h3 class="sidebar__heading">🔍 Quick Tips</h3>
+      {% for tip in quick_tips %}
+      <div class="tip-card">
+        <span class="tip-card__icon">{{ tip.icon }}</span>
+        <div>
+          <p class="tip-card__title">{{ tip.title }}</p>
+          <p class="tip-card__body">{{ tip.tip }}</p>
+        </div>
+      </div>
+      {% endfor %}
+    </section>
+
+    <section class="sidebar__section">
+      <h3 class="sidebar__heading">💬 Try Asking</h3>
+      <ul class="example-list">
+        {% for q in example_questions %}
+        <li class="example-item" data-question="{{ q }}">{{ q }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <section class="sidebar__section sidebar__section--status">
+      <h3 class="sidebar__heading">⚙️ System Status</h3>
+      <div id="statusContainer" class="status-row">
+        <span class="status-dot status-dot--checking"></span>
+        <span id="statusText">Checking…</span>
+      </div>
+      <div class="powered-by">
+        <span class="powered-by__dot"></span>
+        <span>Groq Cloud · Open-source LLM (Compound)</span>
+      </div>
+    </section>
+
+  </aside>
+
+  <!-- ── CHAT PANEL ── -->
+  <section class="chat-panel">
+
+    <!-- Welcome banner (hidden once first message is sent) -->
+    <div id="welcomeBanner" class="welcome">
+      <div class="welcome__emoji">🌱</div>
+      <h2 class="welcome__heading">Smart Farming AI Advisor</h2>
+      <p class="welcome__sub">
+        Ask me anything about crops, soil, irrigation, pests, climate, or
+        sustainable farming practices. I'm powered by
+        <strong>Groq Compound</strong> (open-source) via Groq Cloud — ultra-fast
+        and free.
+      </p>
+      <span class="welcome__model">⚡ {{ model_name }}</span>
+      <div class="welcome__chips">
+        <span class="chip" data-question="How do I improve soil fertility naturally?">Soil fertility</span>
+        <span class="chip" data-question="What are the best drought-resistant crops?">Drought crops</span>
+        <span class="chip" data-question="How to manage waterlogging in fields?">Waterlogging</span>
+        <span class="chip" data-question="How do I set up precision farming sensors?">Precision farming</span>
+        <span class="chip" data-question="What fertiliser schedule works for rice paddy?">Rice fertiliser</span>
+        <span class="chip" data-question="How do I control fungal disease in wheat?">Wheat disease</span>
+      </div>
+    </div>
+
+    <!-- Message thread -->
+    <div id="chatMessages" class="chat-messages"></div>
+
+    <!-- Typing indicator -->
+    <div id="typingIndicator" class="typing-indicator hidden">
+      <div class="typing-indicator__avatar">🤖</div>
+      <div class="typing-indicator__dots">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+
+    <!-- Input bar -->
+    <div class="input-bar">
+      <textarea
+        id="userInput"
+        class="input-bar__textarea"
+        placeholder="Ask about crops, soil, pests, irrigation, weather, sustainability…"
+        rows="1"
+      ></textarea>
+      <button id="btnSend" class="btn btn--primary input-bar__send" title="Send message">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+        </svg>
+      </button>
+    </div>
+
+  </section>
+</main>
+
+<!-- ===== SCRIPT ===== -->
+<script>
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  const $ = id => document.getElementById(id);
+
+  // Persistent session id (survives page reload; cleared on "New Chat")
+  let sessionId = sessionStorage.getItem("farmSessionId") || crypto.randomUUID();
+  sessionStorage.setItem("farmSessionId", sessionId);
+
+  // ── DOM refs ─────────────────────────────────────────────────────────────
+  const chatMessages    = $("chatMessages");
+  const userInput       = $("userInput");
+  const btnSend         = $("btnSend");
+  const btnReset        = $("btnReset");
+  const typingIndicator = $("typingIndicator");
+  const welcomeBanner   = $("welcomeBanner");
+  const statusDot       = document.querySelector(".status-dot");
+  const statusText      = $("statusText");
+
+  // ── Auto-grow textarea ───────────────────────────────────────────────────
+  userInput.addEventListener("input", () => {
+    userInput.style.height = "auto";
+    userInput.style.height = Math.min(userInput.scrollHeight, 160) + "px";
+  });
+
+  // ── Send on Enter (Shift+Enter = newline) ────────────────────────────────
+  userInput.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  btnSend.addEventListener("click", sendMessage);
+
+  // ── Example questions (sidebar list & welcome chips) ─────────────────────
+  document.querySelectorAll(".example-item, .chip").forEach(el => {
+    el.addEventListener("click", () => {
+      userInput.value = el.dataset.question;
+      userInput.dispatchEvent(new Event("input"));
+      userInput.focus();
+    });
+  });
+
+  // ── New Chat ─────────────────────────────────────────────────────────────
+  btnReset.addEventListener("click", async () => {
+    await fetch("/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    chatMessages.innerHTML = "";
+    welcomeBanner.classList.remove("hidden");
+    userInput.value = "";
+    userInput.style.height = "auto";
+    // Issue a new session id
+    sessionId = crypto.randomUUID();
+    sessionStorage.setItem("farmSessionId", sessionId);
+  });
+
+  // ── Health check (Groq) ──────────────────────────────────────────────────
+  async function checkHealth() {
+    try {
+      const r    = await fetch("/health");
+      const data = await r.json();
+      if (data.groq === "ok") {
+        statusDot.className    = "status-dot status-dot--ok";
+        statusText.textContent = `Groq connected · ${data.model}`;
+      } else {
+        statusDot.className    = "status-dot status-dot--error";
+        statusText.textContent = "Groq API unreachable — check API key";
+      }
+    } catch {
+      statusDot.className    = "status-dot status-dot--error";
+      statusText.textContent = "Server unreachable";
+    }
+  }
+  checkHealth();
+  setInterval(checkHealth, 60000);
+
+  // ── Message rendering ─────────────────────────────────────────────────────
+  function appendMessage(role, text) {
+    welcomeBanner.classList.add("hidden");
+
+    const wrap = document.createElement("div");
+    wrap.className = `message message--${role}`;
+
+    const avatar = document.createElement("div");
+    avatar.className = "message__avatar";
+    avatar.textContent = role === "user" ? "👨‍🌾" : "🤖";
+
+    const bubble = document.createElement("div");
+    bubble.className = "message__bubble";
+    bubble.innerHTML = formatText(text);
+
+    if (role === "user") {
+      wrap.appendChild(bubble);
+      wrap.appendChild(avatar);
+    } else {
+      wrap.appendChild(avatar);
+      wrap.appendChild(bubble);
+    }
+
+    chatMessages.appendChild(wrap);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    return wrap;
+  }
+
+  // Markdown-like formatter: bold, italic, numbered lists, bullets, line breaks, code
+  function formatText(raw) {
+    return raw
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.*?)\*/g,     "<em>$1</em>")
+      .replace(/^(\d+)\.\s(.+)/gm, "<br/><strong>$1.</strong> $2")
+      .replace(/^[-•]\s(.+)/gm,   "<br/>• $1")
+      .replace(/\n/g, "<br/>");
+  }
+
+  // ── Core send logic ───────────────────────────────────────────────────────
+  async function sendMessage() {
+    const text = userInput.value.trim();
+    if (!text) return;
+
+    appendMessage("user", text);
+    userInput.value = "";
+    userInput.style.height = "auto";
+    btnSend.disabled = true;
+
+    typingIndicator.classList.remove("hidden");
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    try {
+      const res  = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, session_id: sessionId }),
+      });
+      const data = await res.json();
+      typingIndicator.classList.add("hidden");
+
+      if (data.error) {
+        appendMessage("assistant", `⚠️ Error: ${data.error}`);
+      } else {
+        appendMessage("assistant", data.reply);
+      }
+    } catch (err) {
+      typingIndicator.classList.add("hidden");
+      appendMessage("assistant", "⚠️ Network error — please check your connection and try again.");
+    }
+
+    btnSend.disabled = false;
+    userInput.focus();
+  }
+</script>
+
+</body>
+</html>
